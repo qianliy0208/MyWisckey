@@ -31,7 +31,7 @@ std::string LogFileName(const std::string& name, uint64_t number) {
 std::string VLogFileName(const std::string& name, uint64_t number) {
 //  assert(number > 0);
   return MakeFileName("/tmp/vlogdir", number, "vlog");
-//  return MakeFileName(name, number, "vlog");
+  //  return MakeFileName(name, number, "vlog");
 }
 
 std::string TableFileName(const std::string& name, uint64_t number) {

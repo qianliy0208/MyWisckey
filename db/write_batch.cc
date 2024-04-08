@@ -20,6 +20,7 @@
 #include "db/memtable.h"
 #include "db/write_batch_internal.h"
 #include "util/coding.h"
+#include "PM_unordered_map.h"
 
 namespace leveldb {
 
@@ -115,8 +116,8 @@ Status WriteBatch::Iterate(Handler* handler) const {
     return Status::OK();
   }
 }
-
-Status WriteBatch::Iterate(Handler* handler, uint64_t& pos, uint64_t file_numb) const {//pos是当前vlog文件的大小
+extern PMUnorderedMap pmUnorderedMap;
+    Status WriteBatch::Iterate(Handler* handler, uint64_t& pos, uint64_t file_numb) const {//pos是当前vlog文件的大小
   Slice input(rep_);
   if (input.size() < kHeader) {
     return Status::Corruption("malformed WriteBatch (too small)");
@@ -140,11 +141,14 @@ Status WriteBatch::Iterate(Handler* handler, uint64_t& pos, uint64_t file_numb) 
           size_t len = now_pos - last_pos;//计算出这条记录的大小
           last_pos = now_pos;
 
-          std::string v;
+          std::string v;                         //长度，文件号，位置
           PutVarint64(&v, len);
           PutVarint32(&v, file_numb);
           PutVarint64(&v, pos);
-          handler->Put(key, v);
+          //handler->Put(key, v);
+          pmUnorderedMap.insert(key.ToString(),v);
+
+
           pos = pos + len;//更新pos
         } else {
           return Status::Corruption("bad WriteBatch Put");

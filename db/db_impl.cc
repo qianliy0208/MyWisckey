@@ -38,7 +38,8 @@
 
 namespace leveldb {
 
-const int kNumNonTableCacheFiles = 10;
+    PMUnorderedMap pmUnorderedMap;
+    const int kNumNonTableCacheFiles = 10;
 
 // Information kept for every waiting writer
 struct DBImpl::Writer {
@@ -1217,7 +1218,17 @@ int64_t DBImpl::TEST_MaxNextLevelOverlappingBytes() {
   MutexLock l(&mutex_);
   return versions_->MaxNextLevelOverlappingBytes();
 }
+    Status DBImpl::GetPtr(const ReadOptions& options,
+                          const Slice& key,
+                          std::string* value) {
+        *value = pmUnorderedMap[key.ToString()];
+        if(*value != "") {
+            return Status::OK();
+        }
+        return Status::NotFound("not in map!");
+    }
 
+/*
 Status DBImpl::GetPtr(const ReadOptions& options,
                    const Slice& key,
                    std::string* value) {
@@ -1260,6 +1271,7 @@ Status DBImpl::GetPtr(const ReadOptions& options,
   current->Unref();
             return s;
 }
+*/
 
 Status DBImpl::Get(const ReadOptions& options,
                    const Slice& key,

@@ -954,6 +954,7 @@ class Benchmark {
 }  // namespace leveldb
 
 int main(int argc, char** argv) {
+  system("sudo rm -rf /tmp/vlogdir/*");
   FLAGS_write_buffer_size = leveldb::Options().write_buffer_size;
   FLAGS_max_file_size = leveldb::Options().max_file_size;
   FLAGS_block_size = leveldb::Options().block_size;

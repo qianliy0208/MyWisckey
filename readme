@@ -1,0 +1,2 @@
+fillrandom   :       3.326 micros/op;  298.2 MB/s
+... finished 100000000 ops                              readrandom   :      10.811 micros/op; (100000000 of 100000000 found)

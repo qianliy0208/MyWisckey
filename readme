@@ -1,0 +1,5 @@
+fillrandom   :       2.574 micros/op;  385.3 MB/s
+... finished 100000000 ops                              readrandom   :      11.385 micros/op; (100000000 of 100000000 found)
+
+
+写有提升，为什么读会降低呢？？  不是写到PM了吗？？？

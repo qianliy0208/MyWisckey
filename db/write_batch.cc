@@ -160,8 +160,8 @@ extern PMUnorderedMap pmUnorderedMap;
           size_t len = now_pos - last_pos;
           pos = pos + len;//对于删除操作，不需要v值，更新pos
           last_pos = now_pos;
-
-          handler->Delete(key);//delete的val是不是要写成文件号？
+         // handler->Delete(key);//delete的val是不是要写成文件号？
+         pmUnorderedMap.erase(key.ToString());
         } else {
           return Status::Corruption("bad WriteBatch Delete");
         }

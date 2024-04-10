@@ -7,6 +7,10 @@
 
 #include <deque>
 #include <set>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+#include <thread>
 #include "db/dbformat.h"
 #include "db/log_writer.h"
 #include "db/vlog_writer.h"
@@ -18,6 +22,7 @@
 #include "port/thread_annotations.h"
 #include "db/vlog_manager.h"
 #include "db/PM_unordered_map.h"
+#include "db/MyVlogs.h"
 namespace leveldb {
 
 
@@ -28,8 +33,14 @@ class VersionEdit;
 class VersionSet;
 class GarbageCollector;
 
+// 全局变量: 保存键和指针的队列，从这里面获取键和指针，之后写入到memtable或者hash中
+
+
+
 class DBImpl : public DB {
  public:
+    std::thread thread_;
+    std::atomic<bool> has_been_down_{false};
   DBImpl(const Options& options, const std::string& dbname);
   virtual ~DBImpl();
 
@@ -54,9 +65,11 @@ class DBImpl : public DB {
   virtual void CompactRange(const Slice* begin, const Slice* end);
   Status RealValue(Slice val_ptr, std::string* value);//因为从sst文件和memtable获得的v只是vlog的索引
   //需要从vlog文件读出索引位置处的value值,val_ptr是索引，value是存放真正v的
-
+  Status RealValue(Slice val_ptr, std::string* value,int sub_range);
   // Extra methods (for testing) that are not in the public DB interface
 
+  virtual void StartWriteThread();
+  virtual void ScheduleWriteBatchQueue();
   // Compact any files in the named level that overlap [*begin,*end]
   void TEST_CompactRange(int level, const Slice* begin, const Slice* end);
 

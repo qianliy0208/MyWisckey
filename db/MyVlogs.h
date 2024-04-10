@@ -14,17 +14,17 @@ namespace leveldb {
 
 // 每个文件的元数据：
 struct VFileMate {
+
     int num_r;  // 读取数
     int num_u;  // 更新数
 };
 
 class MyVlogs {
-
 private:
     static std::atomic<uint64_t> file_num;  // 文件号管理
     int sub_num_;
 
-    // 当前子范围指针 ：需要创建动态，删除
+    // 当前子范围指针 ：需要创建动态，删除                     []  [] []  [] [] [] [] []
     std::vector<LogFile* > vlogs_;
 
     // 已经写入的vlog文件元数据 ,帮助我们读取搜索
@@ -39,6 +39,7 @@ public:
     LogFile* GetVlogs(int sub_index);
     void Put(const std::string& key,const std::string& val);
     void Get(const std::string& key,std::string* val);
+    void Get(char* buff,uint32_t file_num,uint64_t pos,uint64_t size,int sub);
     int GetSubIndex(const std::string& key);
     // 从这里获取文件号
     static uint64_t GetNewFileNumber();

@@ -117,7 +117,7 @@ Status WriteBatch::Iterate(Handler* handler) const {
   }
 }
 extern PMUnorderedMap pmUnorderedMap;
-    Status WriteBatch::Iterate(Handler* handler, uint64_t& pos, uint64_t file_numb) const {//pos是当前vlog文件的大小
+Status WriteBatch::Iterate(Handler* handler, uint64_t& pos, uint64_t file_numb) const {//pos是当前vlog文件的大小
   Slice input(rep_);
   if (input.size() < kHeader) {
     return Status::Corruption("malformed WriteBatch (too small)");

@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <atomic>
 #include "leveldb/iterator.h"
 #include "leveldb/options.h"
 
@@ -142,7 +143,10 @@ class DB {
   //    db->CompactRange(NULL, NULL);
   virtual void CompactRange(const Slice* begin, const Slice* end) = 0;
 
- private:
+    virtual void StartWriteThread();
+    virtual void ScheduleWriteBatchQueue();
+
+private:
   // No copying allowed
   DB(const DB&);
   void operator=(const DB&);

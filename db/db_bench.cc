@@ -17,7 +17,7 @@
 #include "util/mutexlock.h"
 #include "util/random.h"
 #include "util/testutil.h"
-
+#include "db/MyVlogs.h"
 // Comma-separated list of operations to run in the specified order
 //   Actual benchmarks:
 //      fillseq       -- write N values in sequential key order in async mode
@@ -115,6 +115,7 @@ static bool FLAGS_reuse_logs = false;
 static const char* FLAGS_db = NULL;
 
 namespace leveldb {
+extern MyVlogs myVlogs;
 
 namespace {
 leveldb::Env* g_env = NULL;
@@ -747,6 +748,7 @@ class Benchmark {
       snprintf(msg, sizeof(msg), "(%d ops)", num_);
       thread->stats.AddMessage(msg);
     }
+    // 开启新的写入线程
 
     RandomGenerator gen;
     WriteBatch batch;
@@ -758,11 +760,20 @@ class Benchmark {
         const int k = seq ? i+j : (thread->rand.Next() % FLAGS_num);
         char key[100];
         snprintf(key, sizeof(key), "%016d", k);
-        batch.Put(key, gen.Generate(value_size_));
+        //batch.Put(key, gen.Generate(value_size_));
+
+
+        myVlogs.Put(key, gen.Generate(value_size_).ToString());
+
+
         bytes += value_size_ + strlen(key);
         thread->stats.FinishedSingleOp();
       }
-      s = db_->Write(write_options_, &batch);
+
+
+      //s = db_->Write(write_options_, &batch);
+
+
       if (!s.ok()) {
         fprintf(stderr, "put error: %s\n", s.ToString().c_str());
         exit(1);
@@ -797,10 +808,42 @@ class Benchmark {
     thread->stats.AddBytes(bytes);
   }
 
+  std::unordered_map<std::string , std::string > k_v;  /// 小规模测试读写
+  void WriteTest() {
+      RandomGenerator gen;
+      WriteBatch batch;
+      Slice val = gen.Generate(value_size_);
+      const int k = rand() % FLAGS_num;
+      char key[100];
+      snprintf(key, sizeof(key), "%016d", k);
+      batch.Put(key, val);
+      k_v[key] = val.ToString();
+
+  }
+  void ReadTest() {
+      ReadOptions options;
+      std::string value;
+      int found = 0;
+      for(auto& e:k_v) {
+          std::string k = e.first;
+          if (db_->Get(options, k, &value).ok()) {
+              assert(k_v[k] == value);
+              found++;
+          }
+
+      }
+
+
+  }
+
   void ReadRandom(ThreadState* thread) {
     ReadOptions options;
     std::string value;
     int found = 0;
+
+
+
+    /*
     for (int i = 0; i < reads_; i++) {
       char key[100];
       const int k = thread->rand.Next() % FLAGS_num;
@@ -812,7 +855,7 @@ class Benchmark {
     }
     char msg[100];
     snprintf(msg, sizeof(msg), "(%d of %d found)", found, num_);
-    thread->stats.AddMessage(msg);
+    thread->stats.AddMessage(msg);*/
   }
 
   void ReadMissing(ThreadState* thread) {

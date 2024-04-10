@@ -18,6 +18,7 @@
 #include "db/vlog_writer.h"
 #include "db/vlog_reader.h"
 #include <sys/stat.h>
+#include <thread>
 #include "db/memtable.h"
 #include "db/table_cache.h"
 #include "db/version_set.h"
@@ -37,6 +38,12 @@
 #include "db/garbage_collector.h"
 
 namespace leveldb {
+
+    std::queue<WriteBatch *> batch_queue;
+    std::mutex batch_queue_mutex;
+    std::condition_variable batch_queue_cv;
+    MyVlogs myVlogs(256);   // 划分为第一个字节的子范围进行放置vlog
+
 
     PMUnorderedMap pmUnorderedMap;
     const int kNumNonTableCacheFiles = 10;
@@ -118,6 +125,7 @@ Options SanitizeOptions(const std::string& dbname,
   return result;
 }
 
+
 DBImpl::DBImpl(const Options& raw_options, const std::string& dbname)
     : env_(raw_options.env),
       internal_comparator_(raw_options.comparator),
@@ -153,6 +161,7 @@ DBImpl::DBImpl(const Options& raw_options, const std::string& dbname)
   table_cache_ = new TableCache(dbname_, &options_, table_cache_size);
   versions_ = new VersionSet(dbname_, &options_, table_cache_,
                              &internal_comparator_);
+ StartWriteThread();
 }
 
 DBImpl::~DBImpl() {
@@ -190,6 +199,7 @@ DBImpl::~DBImpl() {
   if (owns_cache_) {
     delete options_.block_cache;
   }
+  has_been_down_.store(true);
 }
 
 Status DBImpl::NewDB() {
@@ -1218,7 +1228,7 @@ int64_t DBImpl::TEST_MaxNextLevelOverlappingBytes() {
   MutexLock l(&mutex_);
   return versions_->MaxNextLevelOverlappingBytes();
 }
-    Status DBImpl::GetPtr(const ReadOptions& options,
+/*    Status DBImpl::GetPtr(const ReadOptions& options,
                           const Slice& key,
                           std::string* value) {
         *value = pmUnorderedMap[key.ToString()];
@@ -1226,9 +1236,9 @@ int64_t DBImpl::TEST_MaxNextLevelOverlappingBytes() {
             return Status::OK();
         }
         return Status::NotFound("not in map!");
-    }
+    }*/
 
-/*
+
 Status DBImpl::GetPtr(const ReadOptions& options,
                    const Slice& key,
                    std::string* value) {
@@ -1271,7 +1281,7 @@ Status DBImpl::GetPtr(const ReadOptions& options,
   current->Unref();
             return s;
 }
-*/
+
 
 Status DBImpl::Get(const ReadOptions& options,
                    const Slice& key,
@@ -1281,7 +1291,8 @@ Status DBImpl::Get(const ReadOptions& options,
     s = GetPtr(options, key, &val);
         if(!s.ok())
             return s;
-        return RealValue(val, value);
+        int sub_range = myVlogs.GetSubIndex(key.ToString());
+        return RealValue(val, value,sub_range);
 }
 
 Status DBImpl::RealValue(Slice val_ptr, std::string* value)
@@ -1301,7 +1312,8 @@ Status DBImpl::RealValue(Slice val_ptr, std::string* value)
     if(size <= 409600)
     {
         char buf[size];
-        bool b = vlog_reader->Read(buf, size, pos);
+       bool b = vlog_reader->Read(buf, size, pos);
+
         assert(b);
         Slice input(buf, size);
         Slice k, v;
@@ -1326,7 +1338,77 @@ Status DBImpl::RealValue(Slice val_ptr, std::string* value)
     {//如果size太大，栈空间不够，就需要用堆来存放
         char* buf = new char[size];
         bool b = vlog_reader->Read(buf, size, pos);
+
+
         assert(b);
+        Slice input(buf, size);
+        Slice k, v;
+        char tag = input[0];
+        input.remove_prefix(1);
+        switch (tag) {
+            case kTypeValue:
+                if (GetLengthPrefixedSlice(&input, &k) &&GetLengthPrefixedSlice(&input, &v))
+                {
+                    value->assign(v.data(), v.size());
+                }
+                else
+                {
+                    s = Status::Corruption("corrupted key for ");
+                }
+                break;
+            default:
+                s = Status::Corruption("corrupted key for ");
+        }
+        delete[] buf;
+    }
+    return s;
+}
+Status DBImpl::RealValue(Slice val_ptr, std::string* value,int sub)
+{
+// MutexLock l(&mutex_);//因为vlog_reader->Read不是线程安全的，有没有什么优化呢,就是每个vlog_reader一把锁
+    Status s;
+    uint32_t file_numb;
+    uint64_t pos, size;
+    if(!GetVarint64(&val_ptr, &size))
+        return Status::Corruption("parse size false in RealValue");
+    if(!GetVarint32(&val_ptr, &file_numb))
+        return Status::Corruption("parse file_numb false in RealValue");
+    if(!GetVarint64(&val_ptr, &pos))
+        return Status::Corruption("parse pos false in RealValue");
+    log::VReader*  vlog_reader = vlog_manager_.GetVlog(file_numb);
+    assert(vlog_reader != NULL);
+    if(size <= 409600)
+    {
+        char buf[size];
+       // bool b = vlog_reader->Read(buf, size, pos);
+       myVlogs.Get(buf,file_numb,pos,size,sub);
+        //assert(b);
+        Slice input(buf, size);
+        Slice k, v;
+        char tag = input[0];
+        input.remove_prefix(1);
+        switch (tag) {
+            case kTypeValue:
+                if (GetLengthPrefixedSlice(&input, &k) &&GetLengthPrefixedSlice(&input, &v))
+                {
+                    value->assign(v.data(), v.size());
+                }
+                else
+                {
+                    s = Status::Corruption("corrupted key for ");
+                }
+                break;
+            default:
+                s = Status::Corruption("corrupted key for ");
+        }
+    }
+    else
+    {//如果size太大，栈空间不够，就需要用堆来存放
+        char* buf = new char[size];
+        //bool b = vlog_reader->Read(buf, size, pos);
+
+        myVlogs.Get(buf,file_numb,pos,size,sub);
+        //assert(b);
         Slice input(buf, size);
         Slice k, v;
         char tag = input[0];
@@ -1376,79 +1458,74 @@ Status DBImpl::Delete(const WriteOptions& options, const Slice& key) {
   return DB::Delete(options, key);
 }
 
-Status DBImpl::Write(const WriteOptions& options, WriteBatch* my_batch) {
-  Writer w(&mutex_);
-  w.batch = my_batch;
-  w.sync = options.sync;
-  w.done = false;
-
-  MutexLock l(&mutex_);
-  writers_.push_back(&w);
-  while (!w.done && &w != writers_.front()) {
-    w.cv.Wait();
-  }
-  if (w.done) {
-    return w.status;
-  }
-
-  // May temporarily unlock and wait.
-  Status status = MakeRoomForWrite(my_batch == NULL);
-  uint64_t last_sequence = versions_->LastSequence();
-  Writer* last_writer = &w;
-  if (status.ok() && my_batch != NULL) {  // NULL batch is for compactions
-    WriteBatch* updates = BuildBatchGroup(&last_writer);
-    WriteBatchInternal::SetSequence(updates, last_sequence + 1);
-    last_sequence += WriteBatchInternal::Count(updates);
-
-    // Add to log and apply to memtable.  We can release the lock
-    // during this phase since &w is currently responsible for logging
-    // and protects against concurrent loggers and concurrent writes
-    // into mem_.
-    {
-      mutex_.Unlock();
-    int head_size = 0;
-      status = vlog_->AddRecord(WriteBatchInternal::Contents(updates), head_size);
-      bool sync_error = false;
-      if (status.ok() && options.sync) {
-        status = vlogfile_->Sync();
-        if (!status.ok()) {
-          sync_error = true;
+    void DBImpl::ScheduleWriteBatchQueue() {
+        WriteOptions writeOptions;
+        while(!has_been_down_) {
+            std::unique_lock<std::mutex > lock(batch_queue_mutex);
+            batch_queue_cv.wait(lock,[] { return !batch_queue.empty();});
+            WriteBatch* writeBatch = batch_queue.front();
+            batch_queue.pop();
+            this->Write(writeOptions,writeBatch);
+            if(writeBatch){
+                delete writeBatch;
+            }
         }
-      }
-     vlog_head_ += head_size;
-      if (status.ok()) {
-        status = WriteBatchInternal::InsertInto(updates, mem_, vlog_head_, logfile_number_);//vlog_head_代表每条kv对在vlog中的位置
-      }
-      mutex_.Lock();
-      if (sync_error) {
-        // The state of the log file is indeterminate: the log record we
-        // just added may or may not show up when the DB is re-opened.
-        // So we force the DB into a mode where all future writes fail.
-        RecordBackgroundError(status);
-      }
     }
-    if (updates == tmp_batch_) tmp_batch_->Clear();
 
-    versions_->SetLastSequence(last_sequence);
-  }
-
-  while (true) {
-    Writer* ready = writers_.front();
-    writers_.pop_front();
-    if (ready != &w) {
-      ready->status = status;
-      ready->done = true;
-      ready->cv.Signal();
+    void DBImpl::StartWriteThread() {
+            thread_ = std::thread(&DBImpl::ScheduleWriteBatchQueue,this);
     }
-    if (ready == last_writer) break;
-  }
 
-  // Notify new head of write queue
-  if (!writers_.empty()) {
-    writers_.front()->cv.Signal();
-  }
+Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
+    Writer w(&mutex_);
+    w.batch = updates;
+    w.sync = options.sync;
+    w.done = false;
 
-  return status;
+    MutexLock l(&mutex_);
+    writers_.push_back(&w);
+    while (!w.done && &w != writers_.front()) {
+        w.cv.Wait();
+    }
+    if (w.done) {
+        return w.status;
+    }
+
+    // May temporarily unlock and wait.
+    Status status = MakeRoomForWrite(updates == nullptr);
+    uint64_t last_sequence = versions_->LastSequence();
+    Writer* last_writer = &w;
+    if (status.ok() && updates != nullptr) {  // nullptr batch is for compactions
+        WriteBatch* write_batch = BuildBatchGroup(&last_writer);
+        WriteBatchInternal::SetSequence(write_batch, last_sequence + 1);
+        last_sequence += WriteBatchInternal::Count(write_batch);
+
+        // Add to log and apply to memtable.  We can release the lock
+        // during this phase since &w is currently responsible for logging
+        // and protects against concurrent loggers and concurrent writes
+        // into mem_.
+
+            if (status.ok()) {
+                status = WriteBatchInternal::InsertInto(write_batch, mem_);
+            }
+        }
+        versions_->SetLastSequence(last_sequence);
+    while (true) {
+        Writer* ready = writers_.front();
+        writers_.pop_front();
+        if (ready != &w) {
+            ready->status = status;
+            ready->done = true;
+            ready->cv.Signal();
+        }
+        if (ready == last_writer) break;
+    }
+
+    // Notify new head of write queue
+    if (!writers_.empty()) {
+        writers_.front()->cv.Signal();
+    }
+    return status;
 }
 
 // REQUIRES: Writer list must be non-empty
@@ -1502,84 +1579,77 @@ WriteBatch* DBImpl::BuildBatchGroup(Writer** last_writer) {
 
 // REQUIRES: mutex_ is held
 // REQUIRES: this thread is currently at the front of the writer queue
-Status DBImpl::MakeRoomForWrite(bool force) {
-  mutex_.AssertHeld();
-  assert(!writers_.empty());
-  bool allow_delay = !force;
-  Status s;
-      if(vlog_head_ >= options_.max_vlog_size)
-      {
-    //新生成的vlog文件的编号会和imm生成的sst文件一起应用到version中，见CompactMemTable
-         uint32_t new_log_number = versions_->NewVlogNumber();//对于newdb且不能重用上次的log(即不能logandapply新生成的log)，会有bug
-         vlog_head_ = 0;
-         WritableFile* vlfile;
-         s = env_->NewWritableFile(VLogFileName(dbname_, new_log_number), &vlfile);
-         if (!s.ok()) {
-            versions_->ReuseVlogNumber(new_log_number);
- //           break;
- return s;
-         }
-         delete vlog_;
-         delete vlogfile_;
-         vlogfile_ = vlfile;
-         logfile_number_ = new_log_number;
-         vlog_ = new log::VWriter(vlfile);
-          SequentialFile* vlr_file;
-          s = options_.env->NewSequentialFile(VLogFileName(dbname_, new_log_number), &vlr_file);
-          log::VReader* vlog_reader = new log::VReader(vlr_file, true,0);
-          vlog_manager_.AddVlog(new_log_number, vlog_reader);
-          Log(options_.info_log, "new vlog %d...\n", new_log_number);
-      }
-  while (true) {
-    if (!bg_error_.ok()) {
-      // Yield previous error
-      s = bg_error_;
-      break;
-    } else if (
-        allow_delay &&
-        versions_->NumLevelFiles(0) >= config::kL0_SlowdownWritesTrigger) {
-      // We are getting close to hitting a hard limit on the number of
-      // L0 files.  Rather than delaying a single write by several
-      // seconds when we hit the hard limit, start delaying each
-      // individual write by 1ms to reduce latency variance.  Also,
-      // this delay hands over some CPU to the compaction thread in
-      // case it is sharing the same core as the writer.
-      mutex_.Unlock();
-      env_->SleepForMicroseconds(1000);
-      allow_delay = false;  // Do not delay a single write more than once
-      mutex_.Lock();
-    } else if (!force &&
-               (mem_->ApproximateMemoryUsage() <= options_.write_buffer_size)) {
-      // There is room in current memtable
-      break;
-    } else if (imm_ != NULL) {
-      // We have filled up the current memtable, but the previous
-      // one is still being compacted, so we wait.
-      Log(options_.info_log, "Current memtable full; waiting...\n");
-      bg_cv_.Wait();
-    } else if (versions_->NumLevelFiles(0) >= config::kL0_StopWritesTrigger) {
-      // There are too many level-0 files.
-      Log(options_.info_log, "Too many L0 files; waiting...\n");
-      bg_cv_.Wait();
-    } else {
-      // Attempt to switch to a new memtable and trigger compaction of old
-     // assert(versions_->PrevLogNumber() == 0);
+    Status DBImpl::MakeRoomForWrite(bool force) {
+        mutex_.AssertHeld();
+        assert(!writers_.empty());
+        bool allow_delay = !force;
+        Status s;
+        while (true) {
+            if (!bg_error_.ok()) {
+                // Yield previous error
+                s = bg_error_;
+                break;
+            } else if (allow_delay && versions_->NumLevelFiles(0) >=
+                                      config::kL0_SlowdownWritesTrigger) {
+                // We are getting close to hitting a hard limit on the number of
+                // L0 files.  Rather than delaying a single write by several
+                // seconds when we hit the hard limit, start delaying each
+                // individual write by 1ms to reduce latency variance.  Also,
+                // this delay hands over some CPU to the compaction thread in
+                // case it is sharing the same core as the writer.
+                mutex_.Unlock();
+                env_->SleepForMicroseconds(1000);
+                allow_delay = false;  // Do not delay a single write more than once
+                mutex_.Lock();
+            } else if (!force &&
+                       (mem_->ApproximateMemoryUsage() <= options_.write_buffer_size)) {
+                // There is room in current memtable
+                break;
+            } else if (imm_ != nullptr) {
+                // We have filled up the current memtable, but the previous
+                // one is still being compacted, so we wait.
+                Log(options_.info_log, "Current memtable full; waiting...\n");
+            } else if (versions_->NumLevelFiles(0) >= config::kL0_StopWritesTrigger) {
+                // There are too many level-0 files.
+                Log(options_.info_log, "Too many L0 files; waiting...\n");
+            } else {
+                // Attempt to switch to a new memtable and trigger compaction of old
+                assert(versions_->PrevLogNumber() == 0);
+                uint64_t new_log_number = versions_->NewFileNumber();
+                WritableFile* lfile = nullptr;
+                s = env_->NewWritableFile(LogFileName(dbname_, new_log_number), &lfile);
+                if (!s.ok()) {
+                    // Avoid chewing through file number space in a tight loop.
+                    versions_->ReuseFileNumber(new_log_number);
+                    break;
+                }
 
-      imm_ = mem_;
-      uint64_t last_sequence = versions_->LastSequence();
-      last_sequence++;
-      versions_->SetLastSequence(last_sequence);
-      check_point_ = vlog_head_;
-      check_log_ = logfile_number_;
-      has_imm_.Release_Store(imm_);
-      mem_ = new MemTable(internal_comparator_);
-      mem_->Ref();
-      force = false;   // Do not force another compaction if have room
-      MaybeScheduleCompaction();
+
+
+                if (!s.ok()) {
+                    // We may have lost some data written to the previous log file.
+                    // Switch to the new log file anyway, but record as a background
+                    // error so we do not attempt any more writes.
+                    //
+                    // We could perhaps attempt to save the memtable corresponding
+                    // to log file and suppress the error if that works, but that
+                    // would add more complexity in a critical code path.
+                    RecordBackgroundError(s);
+                }
+
+
+
+
+
+                imm_ = mem_;
+                mem_ = new MemTable(internal_comparator_);
+                mem_->Ref();
+                force = false;  // Do not force another compaction if have room
+                MaybeScheduleCompaction();
+            }
+        }
+        return s;
     }
-  }
-  return s;
-}
 
 void DBImpl::CleanVlog()
 {//不可重入
@@ -1815,14 +1885,29 @@ void DBImpl::GetApproximateSizes(
     v->Unref();
   }
 }
+void DB::StartWriteThread() {
+    reinterpret_cast<DBImpl*>(this)->StartWriteThread();
+}
+
+void DB::ScheduleWriteBatchQueue() {
+
+};
 
 // Default implementations of convenience methods that subclasses of DB
 // can call if they wish
 Status DB::Put(const WriteOptions& opt, const Slice& key, const Slice& value) {
   WriteBatch batch;
+  /// 放入myVlogs 子范围队列
+  myVlogs.Put(key.ToString(),value.ToString());
+  return Status::OK();
+}/*Status DB::Put(const WriteOptions& opt, const Slice& key, const Slice& value) {
+  WriteBatch batch;
+
+
   batch.Put(key, value);
+
   return Write(opt, &batch);
-}
+}*/
 
 Status DB::Delete(const WriteOptions& opt, const Slice& key) {
   WriteBatch batch;
@@ -1830,7 +1915,7 @@ Status DB::Delete(const WriteOptions& opt, const Slice& key) {
   return Write(opt, &batch);
 }
 
-DB::~DB() { }
+DB::~DB() {  }
 
 Status DB::Open(const Options& options, const std::string& dbname,
                 DB** dbptr) {

@@ -5,7 +5,7 @@
 #ifndef STORAGE_LEVELDB_DB_VLOG_WRITER_H_
 #define STORAGE_LEVELDB_DB_VLOG_WRITER_H_
 
-#include <stdint.h>
+ #include <stdint.h>
 #include "db/log_format.h"
 #include "leveldb/slice.h"
 #include "leveldb/status.h"

@@ -748,30 +748,32 @@ class Benchmark {
       snprintf(msg, sizeof(msg), "(%d ops)", num_);
       thread->stats.AddMessage(msg);
     }
-    // 开启新的写入线程
+
 
     RandomGenerator gen;
     WriteBatch batch;
     Status s;
     int64_t bytes = 0;
+    std::string val_ptr;
     for (int i = 0; i < num_; i += entries_per_batch_) {
       batch.Clear();
       for (int j = 0; j < entries_per_batch_; j++) {
+
+        val_ptr.clear();
         const int k = seq ? i+j : (thread->rand.Next() % FLAGS_num);
         char key[100];
         snprintf(key, sizeof(key), "%016d", k);
-        //batch.Put(key, gen.Generate(value_size_));
 
+        myVlogs.Put(key, gen.Generate(value_size_).ToString(),&val_ptr);
 
-        myVlogs.Put(key, gen.Generate(value_size_).ToString());
-
+        // 寫入指針
+        batch.Put(key,val_ptr);
 
         bytes += value_size_ + strlen(key);
         thread->stats.FinishedSingleOp();
       }
 
-
-      //s = db_->Write(write_options_, &batch);
+      s = db_->Write(write_options_, &batch);
 
 
       if (!s.ok()) {
@@ -840,14 +842,11 @@ class Benchmark {
     ReadOptions options;
     std::string value;
     int found = 0;
-
-
-
-    /*
     for (int i = 0; i < reads_; i++) {
       char key[100];
       const int k = thread->rand.Next() % FLAGS_num;
       snprintf(key, sizeof(key), "%016d", k);
+
       if (db_->Get(options, key, &value).ok()) {
         found++;
       }
@@ -855,7 +854,7 @@ class Benchmark {
     }
     char msg[100];
     snprintf(msg, sizeof(msg), "(%d of %d found)", found, num_);
-    thread->stats.AddMessage(msg);*/
+    thread->stats.AddMessage(msg);
   }
 
   void ReadMissing(ThreadState* thread) {
@@ -998,6 +997,7 @@ class Benchmark {
 
 int main(int argc, char** argv) {
   system("sudo rm -rf /tmp/vlogdir/*");
+ // system("sudo rm -rf /tmp/clog/*");
   FLAGS_write_buffer_size = leveldb::Options().write_buffer_size;
   FLAGS_max_file_size = leveldb::Options().max_file_size;
   FLAGS_block_size = leveldb::Options().block_size;

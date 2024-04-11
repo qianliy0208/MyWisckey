@@ -10,7 +10,7 @@
 namespace leveldb{
 
     const uint64_t MAX_FILE_SIZE = 1024 * 1024 * 1024;
-    const int BLOCK_SIZE = 1024 * 1024;  // 1MB
+    const uint32_t BLOCK_SIZE = 1024 * 1024;  // 1MB
     class LogFile {
     private:
       //  MyVlogs* myVlogs;
@@ -27,11 +27,14 @@ namespace leveldb{
 
        LogFile();
        void OpenNewFile();
+       void OpenNewFile1();
        void FlushBlock();
        virtual ~LogFile();
        void WriteIntoBuff(const char *record, int size);
 
        void Write(const std::string& key,const std::string& val);
+       void Write(const std::string& key,const std::string& val,std::string* new_val);
+       void Write1(const std::string& key,const std::string& val,std::string* new_val);
 
     };
 }

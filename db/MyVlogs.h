@@ -28,17 +28,19 @@ private:
     std::vector<LogFile* > vlogs_;
 
     // 已经写入的vlog文件元数据 ,帮助我们读取搜索
-    std::vector<std::unordered_map<uint64_t,VFileMate > > meta_files_;  // 需要创建删除
+    std::vector<std::unordered_map<uint64_t,VFileMate> > meta_files_;  // 需要创建删除
 
-
+    // 記錄讀打開的文件句柄
+    std::unordered_map<std::string , FILE* > read_files_;
 
 public:
-    MyVlogs(int sub_num);
+    MyVlogs(int sub_num = 16);
     virtual ~MyVlogs();
 
     LogFile* GetVlogs(int sub_index);
     void Put(const std::string& key,const std::string& val);
-    void Get(const std::string& key,std::string* val);
+    void Put(const std::string& key,const std::string& val,std::string* val_ptr);
+    void Get(const std::string& val_ptr,std::string* val);
     void Get(char* buff,uint32_t file_num,uint64_t pos,uint64_t size,int sub);
     int GetSubIndex(const std::string& key);
     // 从这里获取文件号
